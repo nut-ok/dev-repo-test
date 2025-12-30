@@ -219,6 +219,13 @@
         #output { margin-top: 2rem; display: none; }
         #output h2 { color: var(--text-color); margin-bottom: 1rem; font-size: 1.25rem; font-weight: 600; }
         #outputText { background-color: var(--input-bg); padding: 1rem; border: 1px solid var(--border-color); border-radius: 6px; white-space: pre-wrap; word-wrap: break-word; font-family: 'SF Mono', 'IBM Plex Mono', monospace; font-size: 0.9rem; line-height: 1.6; color: var(--text-color); }
+        .toolbar { display: flex; align-items: center; gap: 0.5rem; margin: 0.5rem 0 1rem; }
+        .toolbar button { width: auto; padding: 0.55rem 0.9rem; font-size: 0.9rem; }
+        .toolbar .pill { background: var(--input-bg); color: var(--text-secondary); border: 1px solid var(--border-color); border-radius: 999px; padding: 0.4rem 0.75rem; font-weight: 600; }
+        .status-message { margin-bottom: 1rem; padding: 0.85rem 1rem; border-radius: 8px; border: 1px solid transparent; display: none; }
+        .status-message.success { background: rgba(40, 167, 69, 0.08); border-color: rgba(40, 167, 69, 0.35); color: #1f7a3d; }
+        .status-message.error { background: rgba(220, 53, 69, 0.08); border-color: rgba(220, 53, 69, 0.35); color: #8a1c2c; }
+        .status-message.info { background: rgba(0, 123, 255, 0.08); border-color: rgba(0, 123, 255, 0.35); color: #0b4f99; }
         .settings-modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: var(--card-bg); padding: 1.5rem; border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2); width: 100%; max-width: 400px; z-index: 1000; transition: background-color 0.3s ease; }
         .settings-modal.active { display: block; }
         .settings-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
@@ -372,6 +379,7 @@
             <h1>Duty State Dev Branch</h1>
             <button class="settings-btn">Settings</button>
         </div>
+        <div class="status-message" id="statusMessage" role="status" aria-live="polite"></div>
         <form id="dutyForm">
             <div class="form-group">
                 <label for="dutyScreenshot">Duty Screenshot URL:</label>
@@ -399,6 +407,10 @@
         </form>
         <div id="output">
             <h2>Generated Log</h2>
+            <div class="toolbar">
+                <span class="pill" id="conversionSummary">Conversion ready</span>
+                <button type="button" id="copyLog">Copy log</button>
+            </div>
             <pre id="outputText"></pre>
         </div>
     </div>
@@ -439,7 +451,47 @@
         const timeEndedNote = document.getElementById('timeEndedNote');
         const pinPrompt = document.getElementById('pinPrompt');
         const pinButton = document.getElementById('pinButton');
+        const statusMessage = document.getElementById('statusMessage');
+        const conversionSummary = document.getElementById('conversionSummary');
+        const copyLogBtn = document.getElementById('copyLog');
+        const output = document.getElementById('output');
+        const outputText = document.getElementById('outputText');
         let currentStep = 0;
+
+        function setStatus(message, type = 'info') {
+            if (!statusMessage) return;
+            statusMessage.textContent = message || '';
+            statusMessage.className = `status-message ${type}`;
+            statusMessage.style.display = message ? 'block' : 'none';
+        }
+
+        function parseTimeString(value) {
+            const match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec((value || '').trim());
+            return match ? [parseInt(match[1], 10), parseInt(match[2], 10)] : null;
+        }
+
+        function formatTimezoneLabel(zone) {
+            if (!zone) return 'timezone';
+            const parts = zone.split('/');
+            return parts[1] ? parts[1].replace('_', ' ') : parts[0];
+        }
+
+        function formatConvertedTime(result) {
+            if (!result) return '--:--';
+            const label = result.label ? ` ${result.label}` : '';
+            const note = !result.label && result.note ? ` (${result.note})` : '';
+            return `${result.time}${label || note}`;
+        }
+
+        function updateConversionSummary() {
+            if (!conversionSummary) return;
+            const prefs = JSON.parse(localStorage.getItem('userPrefs')) || {};
+            const fromLabel = formatTimezoneLabel(prefs.yourTimezone) || 'your timezone';
+            const toLabel = prefs.convertTimezone === 'disable'
+                ? 'conversion off'
+                : formatTimezoneLabel(prefs.convertTimezone) || 'target timezone';
+            conversionSummary.textContent = `Converting ${fromLabel} → ${toLabel}`;
+        }
 
         function applyPreferences() {
             const prefs = JSON.parse(localStorage.getItem('userPrefs')) || {};
@@ -450,6 +502,7 @@
             }
             timeStartedNote.textContent = `Enter time in ${prefs.yourTimezone?.split('/')[1] || 'your timezone'}`;
             timeEndedNote.textContent = `Enter time in ${prefs.yourTimezone?.split('/')[1] || 'your timezone'}`;
+            updateConversionSummary();
         }
 
         function darkenColor(color) {
@@ -528,11 +581,15 @@
 
         // Time Conversion
         function convertTime(time, fromZone, toZone, referenceDate = new Date()) {
-            if (toZone === 'disable') return { time, label: '' };
-            const [hours, minutes] = time.split(':').map(Number);
-            referenceDate.setHours(hours, minutes, 0, 0);
+            const parsed = parseTimeString(time);
+            if (!parsed) return { time: '--:--', label: '', note: 'Enter time as HH:MM.' };
+            if (!toZone) return { time, label: '', note: 'No target timezone selected.' };
+            if (toZone === 'disable') return { time, label: '', note: 'Conversion disabled.' };
+            const [hours, minutes] = parsed;
+            const baseDate = new Date(referenceDate.getTime());
+            baseDate.setHours(hours, minutes, 0, 0);
 
-            const fromTime = new Date(referenceDate.toLocaleString('en-US', { timeZone: fromZone }));
+            const fromTime = new Date(baseDate.toLocaleString('en-US', { timeZone: fromZone || 'UTC' }));
             const toTime = fromTime.toLocaleString('en-US', { 
                 timeZone: toZone,
                 hour: '2-digit',
@@ -558,14 +615,16 @@
                 }
             };
 
-            return { time: toTime, label: getOffsetLabel(toZone) };
+            return { time: toTime, label: getOffsetLabel(toZone), note: '' };
         }
 
         async function fetchGyazoTimestamp(url) {
+            if (!url || !url.includes("gyazo.com")) return null;
             try {
-                const response = await fetch(`/.netlify/functions/getGyazoTimestamp?url=${url}`);
+                const response = await fetch(`/.netlify/functions/getGyazoTimestamp?url=${encodeURIComponent(url)}`);
+                if (!response.ok) throw new Error(`Status ${response.status}`);
                 const data = await response.json();
-                return data.uploaded_at;
+                return data.uploaded_at || null;
             } catch (error) {
                 console.error("Error fetching Gyazo timestamp:", error);
                 return null;
@@ -607,9 +666,13 @@
             if (mode === 'automatic') {
                 timeStartedInput.disabled = true;
                 timeEndedInput.disabled = true;
+                timeStartedInput.placeholder = 'Auto-fill from Gyazo';
+                timeEndedInput.placeholder = 'Auto-fill from Gyazo';
             } else {
                 timeStartedInput.disabled = false;
                 timeEndedInput.disabled = false;
+                timeStartedInput.placeholder = 'e.g., 14:30';
+                timeEndedInput.placeholder = 'e.g., 15:30';
             }
         }
 
@@ -667,43 +730,83 @@
 
         document.getElementById('dutyForm').addEventListener('submit', async function(event) {
             event.preventDefault();
+            setStatus('');
+            if (copyLogBtn) copyLogBtn.disabled = true;
             
             const submitButton = document.querySelector('button[type="submit"]');
             submitButton.classList.add('loading');
             submitButton.disabled = true;
-            
-            const output = document.getElementById('output');
             output.style.display = 'none';
 
             const prefs = JSON.parse(localStorage.getItem('userPrefs')) || {};
-            const dutyScreenshot = document.getElementById('dutyScreenshot').value;
-            const timeStarted = document.getElementById('timeStarted').value;
-            const tablistStarted = document.getElementById('tablistStarted').value;
-            const timeEnded = document.getElementById('timeEnded').value;
-            const tablistEnded = document.getElementById('tablistEnded').value;
+            const dutyScreenshot = document.getElementById('dutyScreenshot').value.trim();
+            const timeStarted = document.getElementById('timeStarted').value.trim();
+            const tablistStarted = document.getElementById('tablistStarted').value.trim();
+            const timeEnded = document.getElementById('timeEnded').value.trim();
+            const tablistEnded = document.getElementById('tablistEnded').value.trim();
+            const inputMode = inputModeToggle.dataset.value || 'automatic';
 
-            const startTimestamp = await fetchGyazoTimestamp(tablistStarted);
-            const endTimestamp = await fetchGyazoTimestamp(tablistEnded);
+            const validationErrors = [];
+            if (inputMode === 'manual') {
+                if (!parseTimeString(timeStarted)) validationErrors.push('Enter Time Started as HH:MM (24h).');
+                if (!parseTimeString(timeEnded)) validationErrors.push('Enter Time Ended as HH:MM (24h).');
+            } else {
+                if (!tablistStarted.includes('gyazo.com') || !tablistEnded.includes('gyazo.com')) {
+                    validationErrors.push('Provide Gyazo links for automatic mode or switch to Manual Input.');
+                }
+            }
+
+            if (validationErrors.length) {
+                setStatus(validationErrors.join(' '), 'error');
+                submitButton.classList.remove('loading');
+                submitButton.disabled = false;
+                return;
+            }
+
+            setStatus('Generating log, please wait...', 'info');
+
+            let startTimestamp = null;
+            let endTimestamp = null;
+            if (inputMode === 'automatic') {
+                [startTimestamp, endTimestamp] = await Promise.all([
+                    fetchGyazoTimestamp(tablistStarted),
+                    fetchGyazoTimestamp(tablistEnded)
+                ]);
+            }
             
             const startResult = convertTime(timeStarted, prefs.yourTimezone, prefs.convertTimezone, startTimestamp ? new Date(startTimestamp) : new Date());
             const endResult = convertTime(timeEnded, prefs.yourTimezone, prefs.convertTimezone, endTimestamp ? new Date(endTimestamp) : new Date());
-            
-            const logText = `Username: ${prefs.username || '798ty7th'}
+            const header = `Username: ${prefs.username || '798ty7th'}
 Duty: ${prefs.duty || 'ARD Duties'}
-${dutyScreenshot}
+Mode: ${inputMode === 'automatic' ? 'Automatic (Gyazo timestamps)' : 'Manual input'}`;
 
-Time Started: ${startResult.time} ${startResult.label}
+            const logText = `${header}
+${dutyScreenshot || 'Duty Screenshot: none provided'}
+
+Time Started (${formatTimezoneLabel(prefs.yourTimezone)}): ${timeStarted || '--'}
+Converted: ${formatConvertedTime(startResult)}
 Tablist Started: ${tablistStarted}
 
-Time Ended: ${endResult.time} ${endResult.label}
+Time Ended (${formatTimezoneLabel(prefs.yourTimezone)}): ${timeEnded || '--'}
+Converted: ${formatConvertedTime(endResult)}
 Tablist Ended: ${tablistEnded}`;
 
-            await new Promise(resolve => setTimeout(resolve, 600));
+            await new Promise(resolve => setTimeout(resolve, 400));
 
-            document.getElementById('outputText').textContent = logText;
+            outputText.textContent = logText;
             output.style.display = 'block';
             submitButton.classList.remove('loading');
             submitButton.disabled = false;
+            if (copyLogBtn) copyLogBtn.disabled = false;
+
+            const notes = [startResult.note, endResult.note].filter(Boolean);
+            if (inputMode === 'automatic' && (!startTimestamp || !endTimestamp)) {
+                setStatus('Generated log, but one or both Gyazo timestamps were unavailable. Confirm links or switch to manual.', 'error');
+            } else if (notes.length) {
+                setStatus(notes.join(' '), 'info');
+            } else {
+                setStatus('Log generated successfully.', 'success');
+            }
         });
 
         const settingsBtn = document.querySelector('.settings-btn');
@@ -770,6 +873,17 @@ Tablist Ended: ${tablistEnded}`;
             }
         });
 
+        copyLogBtn.addEventListener('click', async () => {
+            if (!outputText.textContent.trim()) return;
+            try {
+                await navigator.clipboard.writeText(outputText.textContent);
+                setStatus('Copied log to clipboard.', 'success');
+            } catch (error) {
+                console.error('Clipboard error:', error);
+                setStatus('Unable to copy to clipboard in this browser.', 'error');
+            }
+        });
+
         // Safari on MacBook Detection and Pin Prompt
         function isSafariOnMac() {
             const ua = navigator.userAgent;
@@ -805,6 +919,8 @@ Tablist Ended: ${tablistEnded}`;
         }
 
         document.addEventListener('DOMContentLoaded', function() {
+            updateConversionSummary();
+            if (copyLogBtn) copyLogBtn.disabled = true;
             showSetupPage();
             const savedInputMode = localStorage.getItem('inputMode') || 'automatic';
             const initialText = savedInputMode === 'automatic' ? 'Automatic (Gyazo)' : 'Manual Input';
