@@ -625,6 +625,24 @@
                 hour12: false
             });
 
+            const getOffsetLabel = (zone) => {
+                if (zone === 'UTC') return 'UTC';
+                const isDST = new Date().toLocaleString('en-US', { timeZone: zone }).includes('Daylight');
+                switch (zone) {
+                    case 'America/New_York': return isDST ? 'EDT' : 'EST';
+                    case 'America/Los_Angeles': return isDST ? 'PDT' : 'PST';
+                    case 'America/Chicago': return isDST ? 'CDT' : 'CST';
+                    case 'Europe/London': return isDST ? 'BST' : 'GMT';
+                    case 'Europe/Paris': return isDST ? 'CEST' : 'CET';
+                    case 'Asia/Jerusalem': return isDST ? 'GMT+3' : 'GMT+2';
+                    case 'Asia/Tokyo': return 'JST';
+                    case 'Australia/Sydney': return isDST ? 'AEDT' : 'AEST';
+                    case 'Pacific/Auckland': return isDST ? 'NZDT' : 'NZST';
+                    case 'Asia/Dubai': return 'GST';
+                    default: return '';
+                }
+            };
+
             return { time: toTime, label: getOffsetLabel(toZone), note: '' };
         }
 
@@ -800,6 +818,33 @@ Time Started: ${displayStart}
 Tablist Started: ${tablistStarted}
 
 Time Ended: ${displayEnd}
+
+            setStatus('Generating log, please wait...', 'info');
+
+            let startTimestamp = null;
+            let endTimestamp = null;
+            if (inputMode === 'automatic') {
+                [startTimestamp, endTimestamp] = await Promise.all([
+                    fetchGyazoTimestamp(tablistStarted),
+                    fetchGyazoTimestamp(tablistEnded)
+                ]);
+            }
+            
+            const startResult = convertTime(timeStarted, prefs.yourTimezone, prefs.convertTimezone, startTimestamp ? new Date(startTimestamp) : new Date());
+            const endResult = convertTime(timeEnded, prefs.yourTimezone, prefs.convertTimezone, endTimestamp ? new Date(endTimestamp) : new Date());
+            const header = `Username: ${prefs.username || '798ty7th'}
+Duty: ${prefs.duty || 'ARD Duties'}
+Mode: ${inputMode === 'automatic' ? 'Automatic (Gyazo timestamps)' : 'Manual input'}`;
+
+            const logText = `${header}
+${dutyScreenshot || 'Duty Screenshot: none provided'}
+
+Time Started (${formatTimezoneLabel(prefs.yourTimezone)}): ${timeStarted || '--'}
+Converted: ${formatConvertedTime(startResult)}
+Tablist Started: ${tablistStarted}
+
+Time Ended (${formatTimezoneLabel(prefs.yourTimezone)}): ${timeEnded || '--'}
+Converted: ${formatConvertedTime(endResult)}
 Tablist Ended: ${tablistEnded}`;
 
             await new Promise(resolve => setTimeout(resolve, 400));
