@@ -206,7 +206,7 @@
         .lets-go-btn:hover::before { width: 300%; height: 300%; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
         h1 { color: var(--text-color); font-size: 1.75rem; font-weight: 600; }
-        .settings-btn { padding: 0.5rem 1rem; background-color: var(--primary-color); color: #ffffff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.9rem; transition: background-color 0.2s ease, transform 0.2s ease; }
+        .settings-btn { padding: 0.35rem 0.7rem; background-color: var(--primary-color); color: #ffffff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.8rem; transition: background-color 0.2s ease, transform 0.2s ease; white-space: nowrap; }
         .settings-btn:hover { background-color: var(--primary-hover); transform: translateY(-1px); }
         .time-note { font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.25rem; margin-bottom: 0.5rem; }
         .time-note.hidden { display: none; }
@@ -230,7 +230,7 @@
         .settings-modal.active { display: block; }
         .settings-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
         .settings-header h2 { font-size: 1.25rem; font-weight: 600; color: var(--text-color); }
-        .close-btn { background: none; border: none; font-size: 1.5rem; color: var(--text-secondary); cursor: pointer; transition: color 0.2s ease; }
+        .close-btn { background: none; border: none; font-size: 1.1rem; color: var(--text-secondary); cursor: pointer; transition: color 0.2s ease; margin-left: auto; }
         .close-btn:hover { color: var(--text-color); }
         .settings-content { font-size: 0.9rem; }
         .settings-content p { margin-bottom: 1rem; }
@@ -481,6 +481,34 @@
             const label = result.label ? ` ${result.label}` : '';
             const note = !result.label && result.note ? ` (${result.note})` : '';
             return `${result.time}${label || note}`;
+        }
+
+        function getOffsetLabel(zone) {
+            if (zone === 'UTC') return 'UTC';
+            const isDST = new Date().toLocaleString('en-US', { timeZone: zone }).includes('Daylight');
+            switch (zone) {
+                case 'America/New_York': return isDST ? 'EDT' : 'EST';
+                case 'America/Los_Angeles': return isDST ? 'PDT' : 'PST';
+                case 'America/Chicago': return isDST ? 'CDT' : 'CST';
+                case 'Europe/London': return isDST ? 'BST' : 'GMT';
+                case 'Europe/Paris': return isDST ? 'CEST' : 'CET';
+                case 'Asia/Jerusalem': return isDST ? 'GMT+3' : 'GMT+2';
+                case 'Asia/Tokyo': return 'JST';
+                case 'Australia/Sydney': return isDST ? 'AEDT' : 'AEST';
+                case 'Pacific/Auckland': return isDST ? 'NZDT' : 'NZST';
+                case 'Asia/Dubai': return 'GST';
+                default: return '';
+            }
+        }
+
+        function formatDisplayTime(time, fromZone, toZone, referenceDate) {
+            if (toZone && toZone !== 'disable') {
+                return formatConvertedTime(convertTime(time, fromZone, toZone, referenceDate));
+            }
+            const parsed = parseTimeString(time);
+            if (!parsed) return '--:--';
+            const label = fromZone ? getOffsetLabel(fromZone) : '';
+            return `${time}${label ? ` ${label}` : ''}`;
         }
 
         function updateConversionSummary() {
@@ -762,6 +790,34 @@
                 submitButton.disabled = false;
                 return;
             }
+
+            setStatus('Generating log, please wait...', 'info');
+
+            let startTimestamp = null;
+            let endTimestamp = null;
+            if (inputMode === 'automatic') {
+                [startTimestamp, endTimestamp] = await Promise.all([
+                    fetchGyazoTimestamp(tablistStarted),
+                    fetchGyazoTimestamp(tablistEnded)
+                ]);
+            }
+            
+            const startRef = startTimestamp ? new Date(startTimestamp) : new Date();
+            const endRef = endTimestamp ? new Date(endTimestamp) : new Date();
+            const startResult = convertTime(timeStarted, prefs.yourTimezone, prefs.convertTimezone, startRef);
+            const endResult = convertTime(timeEnded, prefs.yourTimezone, prefs.convertTimezone, endRef);
+            const displayStart = formatDisplayTime(timeStarted, prefs.yourTimezone, prefs.convertTimezone, startRef);
+            const displayEnd = formatDisplayTime(timeEnded, prefs.yourTimezone, prefs.convertTimezone, endRef);
+            const header = `Username: ${prefs.username || '798ty7th'}
+Duty: ${prefs.duty || 'ARD Duties'}`;
+
+            const logText = `${header}
+${dutyScreenshot || 'Duty Screenshot: none provided'}
+
+Time Started: ${displayStart}
+Tablist Started: ${tablistStarted}
+
+Time Ended: ${displayEnd}
 
             setStatus('Generating log, please wait...', 'info');
 
